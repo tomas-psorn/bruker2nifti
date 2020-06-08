@@ -2,6 +2,8 @@ import os
 import nibabel as nib
 import numpy as np
 
+from brukerapi.splitters import SlicePackageSplitter
+
 from bruker2nifti._utils import (
     bruker_read_files,
     eliminate_consecutive_duplicates,
@@ -138,8 +140,7 @@ def get_stack_direction_from_VisuCorePosition(visu_core_position, num_sub_volume
 
 
 def nifti_getter(
-    img_data_vol,
-    visu_pars,
+    reco,
     correct_slope,
     correct_offset,
     sample_upside_down,
@@ -166,84 +167,51 @@ def nifti_getter(
     :return:
     """
     # Check units of measurements:
-    if not ["mm"] * len(visu_pars["VisuCoreSize"]) == visu_pars["VisuCoreUnits"]:
+    if not ["<mm>"] * len(reco.VisuCoreSize) == list(reco.VisuCoreUnits):
         # if the UoM is not mm, change here. Add other measurements and refer to xyzt_units from nibabel convention.
         print(
             "Warning, measurement not in mm. This version of the converter deals with data in mm only."
         )
 
-    # get pre-shape and re-shape volume: (pre-shape is the shape compatible with the slope).
-    vol_pre_shape = [int(i) for i in visu_pars["VisuCoreSize"]]
-    if int(visu_pars["VisuCoreFrameCount"]) > 1:
-        vol_pre_shape += [int(visu_pars["VisuCoreFrameCount"])]
-
-    if np.prod(vol_pre_shape) == img_data_vol.shape[0]:
-        vol_data = img_data_vol.reshape(vol_pre_shape, order="F")
-    else:
-        echo = img_data_vol.shape[0] / np.prod(vol_pre_shape)
-        vol_pre_shape += [echo]
-        vol_pre_shape = [int(k) for k in vol_pre_shape]
-        vol_data = img_data_vol.reshape(vol_pre_shape, order="F")
-
     # correct slope if required
     if correct_slope:
-        vol_data = data_corrector(
-            vol_data, visu_pars["VisuCoreDataSlope"], kind="slope"
-        )
-    # correct offset (AFTER slope) if required
-    if correct_offset:
-        vol_data = data_corrector(
-            vol_data, visu_pars["VisuCoreDataOffs"], kind="offset"
-        )
+        reco.scheme.scale()
 
-    # get number sub-volumes
-    num_sub_volumes = len(
-        eliminate_consecutive_duplicates(list(visu_pars["VisuCoreOrientation"]))
-    )
-
-    if num_sub_volumes > 1:
+    if reco.scheme.num_slice_packages > 1:
 
         output_nifti = []
 
-        assert vol_pre_shape[2] % num_sub_volumes == 0
-        vol_shape = (
-            vol_pre_shape[0],
-            vol_pre_shape[1],
-            int(vol_pre_shape[2] / num_sub_volumes),
-        )
 
-        # get resolution - same for all sub-volumes.
-        resolution = compute_resolution_from_visu_pars(
-            visu_pars["VisuCoreExtent"],
-            visu_pars["VisuCoreSize"],
-            visu_pars["VisuCoreFrameThickness"],
-        )
+        sub_recos = SlicePackageSplitter().split(reco)
 
-        for id_sub_vol in range(num_sub_volumes):
+        for sub_reco in sub_recos:
+            # get resolution - might vary for sub-volumes.
+            resolution = compute_resolution_from_visu_pars(
+                sub_reco.VisuCoreExtent,
+                sub_reco.VisuCoreSize,
+                sub_reco.VisuCoreFrameThickness,
+            )
+
 
             # compute affine
             affine_transf = compute_affine_from_visu_pars(
-                list(visu_pars["VisuCoreOrientation"])[id_sub_vol * vol_shape[2]],
-                list(visu_pars["VisuCorePosition"])[id_sub_vol * vol_shape[2]],
-                visu_pars["VisuSubjectPosition"],
+                sub_reco.VisuCoreOrientation,
+                sub_reco.VisuCorePosition,
+                sub_reco.VisuSubjectPosition,
                 resolution,
                 frame_body_as_frame_head=frame_body_as_frame_head,
                 keep_same_det=keep_same_det,
                 consider_subject_position=consider_subject_position,
             )
 
+
             if sample_upside_down:
                 affine_transf = affine_transf.dot(np.diag([-1, 1, -1, 1]))
 
-            # get sub volume in the correct shape
-            img_data_sub_vol = vol_data[
-                ..., id_sub_vol * vol_shape[2] : (id_sub_vol + 1) * vol_shape[2]
-            ]
-
             if nifti_version == 1:
-                nib_im_sub_vol = nib.Nifti1Image(img_data_sub_vol, affine=affine_transf)
+                nib_im_sub_vol = nib.Nifti1Image(sub_reco.data, affine=affine_transf)
             elif nifti_version == 2:
-                nib_im_sub_vol = nib.Nifti2Image(img_data_sub_vol, affine=affine_transf)
+                nib_im_sub_vol = nib.Nifti2Image(sub_reco.data, affine=affine_transf)
             else:
                 raise IOError("Nifti versions allowed are 1 or 2.")
 
@@ -257,88 +225,35 @@ def nifti_getter(
 
     else:
 
-        # get shape
-        sh = vol_pre_shape
-
         # check for frame groups:  -- Very convoluted scaffolding. Waiting to have more infos to refactor this part.
         # ideally an external function read VisuFGOrderDesc should provide the sh and the choice between # A and # B
         # while testing for exception.
-
-        if "VisuFGOrderDescDim" in visu_pars.keys():  # see manuals D-2-73
-            if visu_pars["VisuFGOrderDescDim"] > 0:
-                if isinstance(visu_pars["VisuFGOrderDesc"], list):
-                    if len(visu_pars["VisuFGOrderDesc"]) > 1:
-                        descr = visu_pars["VisuFGOrderDesc"][:]
-                        # sort descr so that FG_SLICE is the first one, all the others came as they are after swapping.
-                        fg_slice_pos = -1
-                        fg_echo = -1
-                        fg_movie = -1
-                        for d in range(len(descr)):
-                            if "<FG_SLICE>" in descr[d]:
-                                fg_slice_pos = d
-                            if "<FG_ECHO>" in descr[d]:
-                                fg_echo = d
-                            if "<FG_MOVIE>" in descr[d]:
-                                fg_movie = d
-                        if fg_slice_pos == -1:
-                            raise IOError(
-                                "FG_SLICE not found in the order descriptor, can not tell the ordering."
-                            )
-
-                        descr[fg_slice_pos], descr[0] = descr[0], descr[fg_slice_pos]
-
-                        dims = []
-                        for dd in descr:
-                            dims.append(
-                                int(dd.replace("(", "").replace(")", "").split(",")[0])
-                            )
-
-                        if np.prod(dims) == sh[-1]:
-                            sh = vol_pre_shape[:-1] + dims
-                            # A
-                            if fg_echo > -1:
-                                # MSME
-                                stack_data = np.zeros(sh, dtype=vol_data.dtype)
-                                for t in range(sh[3]):
-                                    for z in range(sh[2]):
-                                        stack_data[:, :, z, t] = vol_data[
-                                            :, :, z * sh[3] + t
-                                        ]
-
-                                vol_data = np.copy(stack_data)
-                            # B
-                            elif fg_movie > -1:
-                                # DTI
-                                vol_data = vol_data.reshape(sh, order="F")
-                            else:
-                                # Else ?
-                                vol_data = vol_data.reshape(sh, order="F")
-
         # get resolution
         resolution = compute_resolution_from_visu_pars(
-            visu_pars["VisuCoreExtent"],
-            visu_pars["VisuCoreSize"],
-            visu_pars["VisuCoreFrameThickness"],
+            reco.VisuCoreExtent,
+            reco.VisuCoreSize,
+            reco.VisuCoreFrameThickness
         )
 
         # compute affine
         affine_transf = compute_affine_from_visu_pars(
-            list(visu_pars["VisuCoreOrientation"])[0],
-            list(visu_pars["VisuCorePosition"])[0],
-            visu_pars["VisuSubjectPosition"],
+            reco.VisuCoreOrientation,
+            reco.VisuCorePosition,
+            reco.VisuSubjectPosition,
             resolution,
             frame_body_as_frame_head=frame_body_as_frame_head,
             keep_same_det=keep_same_det,
             consider_subject_position=consider_subject_position,
         )
 
+
         if sample_upside_down:
             affine_transf = affine_transf.dot(np.diag([-1, 1, -1, 1]))
 
         if nifti_version == 1:
-            output_nifti = nib.Nifti1Image(vol_data, affine=affine_transf)
+            output_nifti = nib.Nifti1Image(reco.data, affine=affine_transf)
         elif nifti_version == 2:
-            output_nifti = nib.Nifti2Image(vol_data, affine=affine_transf)
+            output_nifti = nib.Nifti2Image(reco.data, affine=affine_transf)
         else:
             raise IOError("Nifti versions allowed are 1 or 2.")
 

@@ -581,7 +581,8 @@ def compute_affine_from_visu_pars(
 
     result = np.eye(4, dtype=np.float32)
     result[0:3, 0:3] = vc_orientation
-    result[0:3, 3] = vc_position
+    result[0:3, 3] = vc_position[0,:]
+
 
     # 1) Invert the orientation matrix, according to nifti convention and Bruker manual.
     # Round the decimals to avoid precision problems. Check if determinant makes sense.
@@ -647,7 +648,7 @@ def obtain_b_vectors_orient_matrix(
     :return:
     """
     resolution = np.array([1, 1, 1])
-    translation = np.array([0, 0, 0])
+    translation = np.array([[0, 0, 0]])
 
     aff = compute_affine_from_visu_pars(
         vc_orientation,

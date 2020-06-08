@@ -4,6 +4,11 @@ import sys
 import numpy as np
 import warnings
 
+from brukerapi.dataset import Dataset
+from brukerapi.jcampdx import JCAMPDX
+from pathlib import Path
+
+
 from os.path import join as jph
 
 from bruker2nifti._getters import get_list_scans, nifti_getter
@@ -65,6 +70,7 @@ def scan2struct(
     if not os.path.isdir(pfo_scan):
         raise IOError("Input folder does not exists.")
 
+
     # Get system endian_nes
     system_endian_nes = sys.byteorder
 
@@ -84,21 +90,9 @@ def scan2struct(
 
     for id_sub_scan in list_sub_scans:
 
-        visu_pars = bruker_read_files("visu_pars", pfo_scan, sub_scan_num=id_sub_scan)
-
-        if visu_pars == {}:
-            warn_msg = (
-                "\nNo 'visu_pars' data found here: \n{}. \nAre you sure the input folder contains a "
-                "proper Bruker scan?\n".format(jph(pfo_scan, "pdata", id_sub_scan))
-            )
-            warnings.warn(warn_msg)
-            return None
-
-        # In some cases we cannot deal with, VisuPars['VisuCoreSize'] can be a float. No conversion in this case.
-        if not (
-            isinstance(visu_pars["VisuCoreSize"], np.ndarray)
-            or isinstance(visu_pars["VisuCoreSize"], list)
-        ):
+        try:
+            reco = Dataset(Path(pfo_scan)/'pdata/{}/2dseq'.format(id_sub_scan), scale=False)
+        except:
             warn_msg = (
                 "\nWarning, VisuCoreSize in VisuPars parameter file {} \n"
                 "is not a list or a vector in. The study cannot be converted."
@@ -108,44 +102,19 @@ def scan2struct(
             return None
 
         # Get data endian_nes - default big!!
-        if visu_pars["VisuCoreByteOrder"] == "littleEndian":
+        if reco.VisuCoreByteOrder == "littleEndian":
             data_endian_ness = "little"
-        elif visu_pars["VisuCoreByteOrder"] == "bigEndian":
+        elif reco.VisuCoreByteOrder == "bigEndian":
             data_endian_ness = "big"
         else:
             data_endian_ness = "big"
-
-        # Get datatype
-        if visu_pars["VisuCoreWordType"] == "_32BIT_SGN_INT":
-            dt = np.int32
-        elif visu_pars["VisuCoreWordType"] == "_16BIT_SGN_INT":
-            dt = np.int16
-        elif visu_pars["VisuCoreWordType"] == "_8BIT_UNSGN_INT":
-            dt = np.uint8
-        elif visu_pars["VisuCoreWordType"] == "_32BIT_FLOAT":
-            dt = np.float32
-        else:
-            raise IOError("Unknown data type for VisuPars VisuCoreWordType")
-
-        # GET IMAGE VOLUME
-        if os.path.exists(jph(pfo_scan, "pdata", id_sub_scan, "2dseq")):
-            img_data_vol = np.copy(
-                np.fromfile(jph(pfo_scan, "pdata", id_sub_scan, "2dseq"), dtype=dt)
-            )
-        else:
-            warn_msg = (
-                "\nNo '2dseq' data found here: \n{}. \nAre you sure the input folder contains a "
-                "proper Bruker scan?\n".format(jph(pfo_scan, "pdata", id_sub_scan))
-            )
-            warnings.warn(warn_msg)
-            return None
 
         if not data_endian_ness == system_endian_nes:
-            img_data_vol.byteswap(True)
+            reco.data.byteswap(True)
 
-        if "VisuAcqSequenceName" in visu_pars.keys():
-            visu_pars_acq_sequence_name = visu_pars["VisuAcqSequenceName"]
-        else:
+        try:
+            visu_pars_acq_sequence_name = reco.VisuAcqSequenceName
+        except KeyError:
             visu_pars_acq_sequence_name = ""
 
         is_dwi = "dtiepi" in visu_pars_acq_sequence_name.lower()
@@ -163,8 +132,7 @@ def scan2struct(
         # ------------------------------------------------------ #
 
         nib_im = nifti_getter(
-            img_data_vol,
-            visu_pars,
+            reco,
             correct_slope,
             correct_offset,
             sample_upside_down,
@@ -179,21 +147,19 @@ def scan2struct(
         # ------------------------------------------------------ #
 
         nib_scans_list.append(nib_im)
-        visu_pars_list.append(visu_pars)
+        visu_pars_list.append(reco.parameters['visu_pars'])
 
     # -- Get additional data
 
     # Get information from method, if it exists. Parse Method parameter and erase the dictionary if unwanted
-    method = bruker_read_files("method", pfo_scan)
-
-    if method == {}:
+    try:
+        method = JCAMPDX(Path(pfo_scan)/"method")
+        try:
+            acquisition_method = method.get_str("Method")
+        except KeyError:
+            acquisition_method = ''
+    except:
         print("Warning: No 'method' file to parse.")
-    if "Method" in method.keys():
-        acquisition_method = (
-            method["Method"].replace("<", "").replace(">", "").split(":")[-1]
-        )
-    else:
-        acquisition_method = ""
 
     if not get_method:
         method = {}
@@ -203,13 +169,15 @@ def scan2struct(
     reco = {}
 
     if get_acqp:
-        acqp = bruker_read_files("acqp", pfo_scan)
-        if acqp == {}:
+        try:
+            acqp = JCAMPDX(Path(pfo_scan)/"acqp")
+        except:
             print("Warning: No 'acqp' file to parse.")
 
     if get_reco:
-        reco = bruker_read_files("reco", pfo_scan)
-        if reco == {}:
+        try:
+            reco = JCAMPDX(Path(pfo_scan)/"/pdata/1/reco")
+        except:
             print("Warning: No 'method' file to parse.")
 
     # -- Return data structure
@@ -272,8 +240,8 @@ def write_struct(
     # if the modality is a DtiEpi or Dwimage then save the DW directions, b values and b vectors in separate csv .txt.
 
     is_dwi = (
-        "dtiepi" in bruker_struct["visu_pars_list"][0]["VisuAcqSequenceName"].lower()
-        or "dwi" in bruker_struct["visu_pars_list"][0]["VisuAcqSequenceName"].lower()
+        "dtiepi" in bruker_struct["visu_pars_list"][0]['VisuAcqSequenceName'].lower()
+        or "dwi" in bruker_struct["visu_pars_list"][0]['VisuAcqSequenceName'].lower()
     )
 
     if (
@@ -281,9 +249,9 @@ def write_struct(
     ):  # File method is the same for each sub-scan. Cannot embed this in the next for cycle.
 
         # -- Deals with b-vector: normalise, reorient and save in external .npy/txt.
-        dw_grad_vec = bruker_struct["method"]["DwGradVec"]
+        dw_grad_vec = bruker_struct["method"]["PVM_DwGradVec"]
 
-        assert dw_grad_vec.shape[0] == bruker_struct["method"]["DwNDiffExp"]
+        assert dw_grad_vec.shape[0] == bruker_struct["method"]["PVM_DwNDiffExp"]
 
         # get b-vectors re-orientation matrix from visu-pars
         reorientation_matrix = obtain_b_vectors_orient_matrix(
@@ -312,8 +280,8 @@ def write_struct(
             )
             print(msg)
 
-        b_vals = bruker_struct["method"]["DwEffBval"]
-        b_vects = bruker_struct["method"]["DwDir"]
+        b_vals = bruker_struct["method"]["PVM_DwEffBval"]
+        b_vects = bruker_struct["method"]["PVM_DwDir"]
 
         np.save(jph(pfo_output, fin_scan + "_DwEffBval.npy"), b_vals)
         np.save(jph(pfo_output, fin_scan + "_DwDir.npy"), b_vects)
@@ -381,6 +349,7 @@ def write_struct(
         )
 
         # A and B) save them both in .txt if human readable version of data is required.
+        save_human_readable = False
         if save_human_readable:
             from_dict_to_txt_sorted(
                 bruker_struct["visu_pars_list"][i],
@@ -528,15 +497,15 @@ def write_struct(
     if not bruker_struct["method"] == {}:
 
         summary_info_method = {
-            "method['SpatDimEnum']": bruker_struct["method"]["SpatDimEnum"],
-            "method['Matrix']": bruker_struct["method"]["Matrix"],
-            "method['SpatResol']": bruker_struct["method"]["SpatResol"],
+            "method['PVM_SpatDimEnum']": bruker_struct["method"]["PVM_SpatDimEnum"],
+            "method['PVM_Matrix']": bruker_struct["method"]["PVM_Matrix"],
+            "method['PVM_SpatResol']": bruker_struct["method"]["PVM_SpatResol"],
             "method['Method']": bruker_struct["method"]["Method"],
-            "method['SPackArrSliceOrient']": bruker_struct["method"][
-                "SPackArrSliceOrient"
+            "method['PVM_SPackArrSliceOrient']": bruker_struct["method"][
+                "PVM_SPackArrSliceOrient"
             ],
-            "method['SPackArrReadOrient']": bruker_struct["method"][
-                "SPackArrReadOrient"
+            "method['PVM_SPackArrReadOrient']": bruker_struct["method"][
+                "PVM_SPackArrReadOrient"
             ],
         }
         summary_info.update(summary_info_method)

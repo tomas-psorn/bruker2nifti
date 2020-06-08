@@ -4,6 +4,7 @@ from bruker2nifti._utils import bruker_read_files
 from bruker2nifti._getters import get_list_scans, get_subject_name
 from bruker2nifti._cores import scan2struct, write_struct
 
+from brukerapi.study import Study
 
 class Bruker2Nifti(object):
     """
@@ -65,6 +66,8 @@ class Bruker2Nifti(object):
         self.verbose = 1
         # automatic filling of advanced selections class attributes
         self.explore_study()
+
+        # self.study = Study(pfo_study_bruker_input)
 
     def explore_study(self):
         """
