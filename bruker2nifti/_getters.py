@@ -167,7 +167,7 @@ def nifti_getter(
     :return:
     """
     # Check units of measurements:
-    if not ["<mm>"] * len(reco.VisuCoreSize) == list(reco.VisuCoreUnits):
+    if not ["<mm>"] * len(reco.get_list('VisuCoreSize')) == reco.get_list('VisuCoreUnits'):
         # if the UoM is not mm, change here. Add other measurements and refer to xyzt_units from nibabel convention.
         print(
             "Warning, measurement not in mm. This version of the converter deals with data in mm only."
@@ -180,7 +180,6 @@ def nifti_getter(
     if reco.scheme.num_slice_packages > 1:
 
         output_nifti = []
-
 
         sub_recos = SlicePackageSplitter().split(reco)
 

@@ -4,7 +4,8 @@ from bruker2nifti._utils import bruker_read_files
 from bruker2nifti._getters import get_list_scans, get_subject_name
 from bruker2nifti._cores import scan2struct, write_struct
 
-from brukerapi.study import Study
+from brukerapi.folders import Study
+from brukerapi.exceptions import *
 
 class Bruker2Nifti(object):
     """
@@ -64,10 +65,16 @@ class Bruker2Nifti(object):
             None
         )  # you can select specific names for the subset self.scans_list.
         self.verbose = 1
+
+        # Create a Study object
+        try:
+            self.study = Study(pfo_study_bruker_input)
+        except NotStudyFolder:
+            raise IOError("Input folder does not exist.")
+
         # automatic filling of advanced selections class attributes
         self.explore_study()
 
-        # self.study = Study(pfo_study_bruker_input)
 
     def explore_study(self):
         """
@@ -75,29 +82,24 @@ class Bruker2Nifti(object):
         It also checks if the given attributes are meaningful.
         :return:
         """
-
-        if not os.path.isdir(self.pfo_study_bruker_input):
-            raise IOError("Input folder does not exist.")
         if not os.path.isdir(self.pfo_study_nifti_output):
             raise IOError("Output folder does not exist.")
         if self.scans_list is None:
-            self.scans_list = get_list_scans(
-                self.pfo_study_bruker_input, print_structure=False
-            )
-            assert isinstance(self.scans_list, list)
-            msg = (
-                "No scans found, are you sure the input folder contains a Bruker study?"
-            )
-            if not len(self.scans_list) > 0:
-                raise IOError(msg)
+            self.scans_list = self.study.experiment_list
+
+            if not self.scans_list:
+                raise IOError("No scans found, are you sure the input folder contains a Bruker study?")
+
         if self.study_name is None or self.study_name is "":
-            _study_name = get_subject_name(self.pfo_study_bruker_input).replace(
+            with self.study.subject as subject:
+                _study_name = subject.get_str('SUBJECT_id').replace(
                 " ", "_"
-            )
+                )
             self.study_name = "".join(e for e in _study_name if e.isalnum())
+
         if self.list_new_name_each_scan is None:
             list_new_name_each_scan = [
-                self.study_name + "_" + ls for ls in self.scans_list
+                self.study_name + "_" + ls.path.name for ls in self.scans_list
             ]
             self.list_new_name_each_scan = list_new_name_each_scan
             assert isinstance(self.list_new_name_each_scan, list)
@@ -129,7 +131,7 @@ class Bruker2Nifti(object):
 
     def convert_scan(
         self,
-        pfo_input_scan,
+        input_scan,
         pfo_output_converted,
         nifti_file_name=None,
         create_output_folder_if_not_exists=True,
@@ -144,14 +146,14 @@ class Bruker2Nifti(object):
         :return: [None] save the data parsed from the raw Bruker scan into a folder, including the nifti image.
         """
 
-        if not os.path.isdir(pfo_input_scan):
+        if not os.path.isdir(str(input_scan.path)):
             raise IOError("Input folder does not exist.")
 
         if create_output_folder_if_not_exists:
             os.makedirs(pfo_output_converted)
 
         struct_scan = scan2struct(
-            pfo_input_scan,
+            input_scan,
             correct_slope=self.correct_slope,
             correct_offset=self.correct_offset,
             sample_upside_down=self.sample_upside_down,
@@ -201,18 +203,15 @@ class Bruker2Nifti(object):
 
         print("\nStudy conversion \n{}\nstarted:\n".format(self.pfo_study_bruker_input))
 
-        for bruker_scan_name, scan_name in zip(
+        for bruker_scan, scan_name in zip(
             self.scans_list, self.list_new_name_each_scan
         ):
-            pfo_scan_bruker = os.path.join(
-                self.pfo_study_bruker_input, bruker_scan_name
-            )
             pfo_scan_nifti = os.path.join(pfo_nifti_study, scan_name)
 
-            print("\nConverting experiment {}:\n".format(bruker_scan_name))
+            print("\nConverting experiment {}:\n".format(bruker_scan.path.name))
 
             self.convert_scan(
-                pfo_scan_bruker,
+                bruker_scan,
                 pfo_scan_nifti,
                 create_output_folder_if_not_exists=True,
                 nifti_file_name=scan_name,

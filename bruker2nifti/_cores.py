@@ -23,7 +23,7 @@ from bruker2nifti._utils import (
 
 
 def scan2struct(
-    pfo_scan,
+    scan,
     correct_slope=True,
     correct_offset=True,
     sample_upside_down=False,
@@ -67,7 +67,7 @@ def scan2struct(
     :return: output_data data structure containing the nibabel image(s) {nib_list, visu_pars_list, acqp, method, reco}
     """
 
-    if not os.path.isdir(pfo_scan):
+    if not os.path.isdir(str(scan.path)):
         raise IOError("Input folder does not exists.")
 
 
@@ -75,12 +75,12 @@ def scan2struct(
     system_endian_nes = sys.byteorder
 
     # Get sub-scans series in the same experiment.
-    list_sub_scans = get_list_scans(jph(pfo_scan, "pdata"))
+    list_sub_scans = scan.processing_list
 
     if not list_sub_scans:
         warn_msg = (
             "\nNo sub scan in the folder structure: \n{}. \nAre you sure the input folder contains a "
-            "proper Bruker scan?\n".format(jph(pfo_scan, "pdata"))
+            "proper Bruker scan?\n".format(jph(str(scan.path), "pdata"))
         )
         warnings.warn(warn_msg)
         return None
@@ -88,72 +88,64 @@ def scan2struct(
     nib_scans_list = []
     visu_pars_list = []
 
-    for id_sub_scan in list_sub_scans:
+    for sub_scan in list_sub_scans:
+        with sub_scan["2dseq"](scale=False) as reco:
+            if 'spectroscopic' in reco.get_list('VisuCoreDimDesc'):
+                return
 
-        try:
-            reco = Dataset(Path(pfo_scan)/'pdata/{}/2dseq'.format(id_sub_scan), scale=False)
-        except:
-            warn_msg = (
-                "\nWarning, VisuCoreSize in VisuPars parameter file {} \n"
-                "is not a list or a vector in. The study cannot be converted."
-                " \n".format(jph(pfo_scan, "pdata", id_sub_scan))
+            # Get data endian_nes - default big!!
+            if reco.VisuCoreByteOrder == "littleEndian":
+                data_endian_ness = "little"
+            elif reco.VisuCoreByteOrder == "bigEndian":
+                data_endian_ness = "big"
+            else:
+                data_endian_ness = "big"
+
+            if not data_endian_ness == system_endian_nes:
+                reco.data.byteswap(True)
+
+            try:
+                visu_pars_acq_sequence_name = reco.VisuAcqSequenceName
+            except KeyError:
+                visu_pars_acq_sequence_name = ""
+
+            is_dwi = "dtiepi" in visu_pars_acq_sequence_name.lower()
+
+            if is_dwi:
+                # Force to not correcting the slope, if true. Diffusion weighted images must be slope corrected before the
+                # DTI analysis. They will be to heavy otherwise.
+                correct_slope = False
+                correct_offset = False
+                # Force method to be parsed. Useful infos in this file to process the DWI.
+                get_method = True
+
+            # ------------------------------------------------------ #
+            # ------ Generate the nifti image using visu_pars. ----- #
+            # ------------------------------------------------------ #
+
+            nib_im = nifti_getter(
+                reco,
+                correct_slope,
+                correct_offset,
+                sample_upside_down,
+                nifti_version,
+                qform_code,
+                sform_code,
+                frame_body_as_frame_head=frame_body_as_frame_head,
+                keep_same_det=keep_same_det,
+                consider_subject_position=consider_subject_position,
             )
-            warnings.warn(warn_msg)
-            return None
+            # ------------------------------------------------------ #
+            # ------------------------------------------------------ #
 
-        # Get data endian_nes - default big!!
-        if reco.VisuCoreByteOrder == "littleEndian":
-            data_endian_ness = "little"
-        elif reco.VisuCoreByteOrder == "bigEndian":
-            data_endian_ness = "big"
-        else:
-            data_endian_ness = "big"
-
-        if not data_endian_ness == system_endian_nes:
-            reco.data.byteswap(True)
-
-        try:
-            visu_pars_acq_sequence_name = reco.VisuAcqSequenceName
-        except KeyError:
-            visu_pars_acq_sequence_name = ""
-
-        is_dwi = "dtiepi" in visu_pars_acq_sequence_name.lower()
-
-        if is_dwi:
-            # Force to not correcting the slope, if true. Diffusion weighted images must be slope corrected before the
-            # DTI analysis. They will be to heavy otherwise.
-            correct_slope = False
-            correct_offset = False
-            # Force method to be parsed. Useful infos in this file to process the DWI.
-            get_method = True
-
-        # ------------------------------------------------------ #
-        # ------ Generate the nifti image using visu_pars. ----- #
-        # ------------------------------------------------------ #
-
-        nib_im = nifti_getter(
-            reco,
-            correct_slope,
-            correct_offset,
-            sample_upside_down,
-            nifti_version,
-            qform_code,
-            sform_code,
-            frame_body_as_frame_head=frame_body_as_frame_head,
-            keep_same_det=keep_same_det,
-            consider_subject_position=consider_subject_position,
-        )
-        # ------------------------------------------------------ #
-        # ------------------------------------------------------ #
-
-        nib_scans_list.append(nib_im)
-        visu_pars_list.append(reco.parameters['visu_pars'])
+            nib_scans_list.append(nib_im)
+            visu_pars_list.append(reco.parameters['visu_pars'])
 
     # -- Get additional data
 
     # Get information from method, if it exists. Parse Method parameter and erase the dictionary if unwanted
     try:
-        method = JCAMPDX(Path(pfo_scan)/"method")
+        method = JCAMPDX(scan.path/"method")
         try:
             acquisition_method = method.get_str("Method")
         except KeyError:
@@ -170,13 +162,13 @@ def scan2struct(
 
     if get_acqp:
         try:
-            acqp = JCAMPDX(Path(pfo_scan)/"acqp")
+            acqp = JCAMPDX(scan.path/"acqp")
         except:
             print("Warning: No 'acqp' file to parse.")
 
     if get_reco:
         try:
-            reco = JCAMPDX(Path(pfo_scan)/"/pdata/1/reco")
+            reco = JCAMPDX(scan.path/"/pdata/1/reco")
         except:
             print("Warning: No 'method' file to parse.")
 
