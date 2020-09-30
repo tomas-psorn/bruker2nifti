@@ -167,7 +167,7 @@ def nifti_getter(
     :return:
     """
     # Check units of measurements:
-    if not ["<mm>"] * len(reco.get_list('VisuCoreSize')) == reco.get_list('VisuCoreUnits'):
+    if not ["<mm>"] * len(reco['VisuCoreSize'].list) == reco['VisuCoreUnits'].list:
         # if the UoM is not mm, change here. Add other measurements and refer to xyzt_units from nibabel convention.
         print(
             "Warning, measurement not in mm. This version of the converter deals with data in mm only."
@@ -175,9 +175,9 @@ def nifti_getter(
 
     # correct slope if required
     if correct_slope:
-        reco.scheme.scale()
+        reco.schema.scale()
 
-    if reco.scheme.num_slice_packages > 1:
+    if reco.num_slice_packages > 1:
 
         output_nifti = []
 
@@ -186,17 +186,17 @@ def nifti_getter(
         for sub_reco in sub_recos:
             # get resolution - might vary for sub-volumes.
             resolution = compute_resolution_from_visu_pars(
-                sub_reco.VisuCoreExtent,
-                sub_reco.VisuCoreSize,
-                sub_reco.VisuCoreFrameThickness,
+                sub_reco['VisuCoreExtent'].value,
+                sub_reco['VisuCoreSize'].value,
+                sub_reco['VisuCoreFrameThickness'].value,
             )
 
 
             # compute affine
             affine_transf = compute_affine_from_visu_pars(
-                sub_reco.VisuCoreOrientation,
-                sub_reco.VisuCorePosition,
-                sub_reco.VisuSubjectPosition,
+                sub_reco['VisuCoreOrientation'].value,
+                sub_reco['VisuCorePosition'].value,
+                sub_reco['VisuSubjectPosition'].value,
                 resolution,
                 frame_body_as_frame_head=frame_body_as_frame_head,
                 keep_same_det=keep_same_det,
@@ -229,16 +229,16 @@ def nifti_getter(
         # while testing for exception.
         # get resolution
         resolution = compute_resolution_from_visu_pars(
-            reco.VisuCoreExtent,
-            reco.VisuCoreSize,
-            reco.VisuCoreFrameThickness
+            reco['VisuCoreExtent'].value,
+            reco['VisuCoreSize'].value,
+            reco['VisuCoreFrameThickness'].value
         )
 
         # compute affine
         affine_transf = compute_affine_from_visu_pars(
-            reco.VisuCoreOrientation,
-            reco.VisuCorePosition,
-            reco.VisuSubjectPosition,
+            reco['VisuCoreOrientation'].value,
+            reco['VisuCorePosition'].value,
+            reco['VisuSubjectPosition'].value,
             resolution,
             frame_body_as_frame_head=frame_body_as_frame_head,
             keep_same_det=keep_same_det,

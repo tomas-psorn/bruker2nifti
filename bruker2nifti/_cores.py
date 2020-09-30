@@ -90,13 +90,13 @@ def scan2struct(
 
     for sub_scan in list_sub_scans:
         with sub_scan["2dseq"](scale=False) as reco:
-            if 'spectroscopic' in reco.get_list('VisuCoreDimDesc'):
+            if 'spectroscopic' in reco['VisuCoreDimDesc'].list:
                 return
 
             # Get data endian_nes - default big!!
-            if reco.VisuCoreByteOrder == "littleEndian":
+            if reco['VisuCoreByteOrder'].value == "littleEndian":
                 data_endian_ness = "little"
-            elif reco.VisuCoreByteOrder == "bigEndian":
+            elif reco['VisuCoreByteOrder'].value == "bigEndian":
                 data_endian_ness = "big"
             else:
                 data_endian_ness = "big"
@@ -105,7 +105,7 @@ def scan2struct(
                 reco.data.byteswap(True)
 
             try:
-                visu_pars_acq_sequence_name = reco.VisuAcqSequenceName
+                visu_pars_acq_sequence_name = reco['VisuAcqSequenceName'].value
             except KeyError:
                 visu_pars_acq_sequence_name = ""
 
@@ -231,10 +231,12 @@ def write_struct(
     # -- WRITE Additional data shared by all the sub-scans:
     # if the modality is a DtiEpi or Dwimage then save the DW directions, b values and b vectors in separate csv .txt.
 
-    is_dwi = (
-        "dtiepi" in bruker_struct["visu_pars_list"][0]['VisuAcqSequenceName'].lower()
-        or "dwi" in bruker_struct["visu_pars_list"][0]['VisuAcqSequenceName'].lower()
-    )
+    # is_dwi = (
+    #     "dtiepi" in bruker_struct["visu_pars_list"][0]['VisuAcqSequenceName'].lower()
+    #     or "dwi" in bruker_struct["visu_pars_list"][0]['VisuAcqSequenceName'].lower()
+    # )
+
+    is_dwi=False
 
     if (
         is_dwi
@@ -329,91 +331,91 @@ def write_struct(
             i_label = "_"
 
         # A) Save visu_pars for each sub-scan:
-        np.save(
-            jph(pfo_output, fin_scan + i_label + "visu_pars.npy"),
-            bruker_struct["visu_pars_list"][i],
-        )
+        # np.save(
+        #     jph(pfo_output, fin_scan + i_label + "visu_pars.npy"),
+        #     bruker_struct["visu_pars_list"][i],
+        # )
 
         # B) Save single slope data for each sub-scan (from visu_pars):
-        np.save(
-            jph(pfo_output, fin_scan + i_label + "slope.npy"),
-            bruker_struct["visu_pars_list"][i]["VisuCoreDataSlope"],
-        )
+        # np.save(
+        #     jph(pfo_output, fin_scan + i_label + "slope.npy"),
+        #     bruker_struct["visu_pars_list"][i]["VisuCoreDataSlope"],
+        # )
 
         # A and B) save them both in .txt if human readable version of data is required.
-        save_human_readable = False
-        if save_human_readable:
-            from_dict_to_txt_sorted(
-                bruker_struct["visu_pars_list"][i],
-                jph(pfo_output, fin_scan + i_label + "visu_pars.txt"),
-            )
-
-            slope = bruker_struct["visu_pars_list"][i]["VisuCoreDataSlope"]
-            if not isinstance(slope, np.ndarray):
-                slope = np.atleast_2d(slope)
-            np.savetxt(
-                jph(pfo_output, fin_scan + i_label + "slope.txt"), slope, fmt="%.14f"
-            )
-
-        # Update summary dictionary:
-        summary_info_i = {
-            i_label[1:]
-            + "visu_pars['VisuUid']": bruker_struct["visu_pars_list"][i]["VisuUid"],
-            i_label[1:]
-            + "visu_pars['VisuCoreDataSlope']": bruker_struct["visu_pars_list"][i][
-                "VisuCoreDataSlope"
-            ],
-            i_label[1:]
-            + "visu_pars['VisuCoreSize']": bruker_struct["visu_pars_list"][i][
-                "VisuCoreSize"
-            ],
-            i_label[1:]
-            + "visu_pars['VisuCoreOrientation']": bruker_struct["visu_pars_list"][i][
-                "VisuCoreOrientation"
-            ],
-            i_label[1:]
-            + "visu_pars['VisuCorePosition']": bruker_struct["visu_pars_list"][i][
-                "VisuCorePosition"
-            ],
-        }
-
-        if len(list(bruker_struct["visu_pars_list"][i]["VisuCoreExtent"])) == 2:
-            # equivalent to struct['method']['SpatDimEnum'] == '2D':
-            if "VisuCoreSlicePacksSlices" in bruker_struct["visu_pars_list"][i].keys():
-                summary_info_i.update(
-                    {
-                        i_label[1:]
-                        + "visu_pars['VisuCoreSlicePacksSlices']": bruker_struct[
-                            "visu_pars_list"
-                        ][i]["VisuCoreSlicePacksSlices"]
-                    }
-                )
-
-        if (
-            len(list(bruker_struct["visu_pars_list"][i]["VisuCoreExtent"])) == 3
-            and "VisuCoreDiskSliceOrder" in bruker_struct["visu_pars_list"][i].keys()
-        ):
-            # first part equivalent to struct['method']['SpatDimEnum'] == '3D':
-            summary_info_i.update(
-                {
-                    i_label[1:]
-                    + "visu_pars['VisuCoreDiskSliceOrder']": bruker_struct[
-                        "visu_pars_list"
-                    ][i]["VisuCoreDiskSliceOrder"]
-                }
-            )
-
-        if "VisuCreatorVersion" in bruker_struct["visu_pars_list"][i].keys():
-            summary_info_i.update(
-                {
-                    i_label[1:]
-                    + "visu_pars['VisuCreatorVersion']": bruker_struct[
-                        "visu_pars_list"
-                    ][i]["VisuCreatorVersion"]
-                }
-            )
-
-        summary_info.update(summary_info_i)
+        # save_human_readable = False
+        # if save_human_readable:
+        #     from_dict_to_txt_sorted(
+        #         bruker_struct["visu_pars_list"][i],
+        #         jph(pfo_output, fin_scan + i_label + "visu_pars.txt"),
+        #     )
+        #
+        #     slope = bruker_struct["visu_pars_list"][i]["VisuCoreDataSlope"]
+        #     if not isinstance(slope, np.ndarray):
+        #         slope = np.atleast_2d(slope)
+        #     np.savetxt(
+        #         jph(pfo_output, fin_scan + i_label + "slope.txt"), slope, fmt="%.14f"
+        #     )
+        #
+        # # Update summary dictionary:
+        # summary_info_i = {
+        #     i_label[1:]
+        #     + "visu_pars['VisuUid']": bruker_struct["visu_pars_list"][i]["VisuUid"],
+        #     i_label[1:]
+        #     + "visu_pars['VisuCoreDataSlope']": bruker_struct["visu_pars_list"][i][
+        #         "VisuCoreDataSlope"
+        #     ],
+        #     i_label[1:]
+        #     + "visu_pars['VisuCoreSize']": bruker_struct["visu_pars_list"][i][
+        #         "VisuCoreSize"
+        #     ],
+        #     i_label[1:]
+        #     + "visu_pars['VisuCoreOrientation']": bruker_struct["visu_pars_list"][i][
+        #         "VisuCoreOrientation"
+        #     ],
+        #     i_label[1:]
+        #     + "visu_pars['VisuCorePosition']": bruker_struct["visu_pars_list"][i][
+        #         "VisuCorePosition"
+        #     ],
+        # }
+        #
+        # if len(list(bruker_struct["visu_pars_list"][i]["VisuCoreExtent"])) == 2:
+        #     # equivalent to struct['method']['SpatDimEnum'] == '2D':
+        #     if "VisuCoreSlicePacksSlices" in bruker_struct["visu_pars_list"][i].keys():
+        #         summary_info_i.update(
+        #             {
+        #                 i_label[1:]
+        #                 + "visu_pars['VisuCoreSlicePacksSlices']": bruker_struct[
+        #                     "visu_pars_list"
+        #                 ][i]["VisuCoreSlicePacksSlices"]
+        #             }
+        #         )
+        #
+        # if (
+        #     len(list(bruker_struct["visu_pars_list"][i]["VisuCoreExtent"])) == 3
+        #     and "VisuCoreDiskSliceOrder" in bruker_struct["visu_pars_list"][i].keys()
+        # ):
+        #     # first part equivalent to struct['method']['SpatDimEnum'] == '3D':
+        #     summary_info_i.update(
+        #         {
+        #             i_label[1:]
+        #             + "visu_pars['VisuCoreDiskSliceOrder']": bruker_struct[
+        #                 "visu_pars_list"
+        #             ][i]["VisuCoreDiskSliceOrder"]
+        #         }
+        #     )
+        #
+        # if "VisuCreatorVersion" in bruker_struct["visu_pars_list"][i].keys():
+        #     summary_info_i.update(
+        #         {
+        #             i_label[1:]
+        #             + "visu_pars['VisuCreatorVersion']": bruker_struct[
+        #                 "visu_pars_list"
+        #             ][i]["VisuCreatorVersion"]
+        #         }
+        #     )
+        #
+        # summary_info.update(summary_info_i)
 
         # WRITE NIFTI IMAGES:
 
